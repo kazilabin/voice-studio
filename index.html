@@ -93,6 +93,8 @@ details summary{cursor:pointer;font-weight:700}pre{white-space:pre-wrap;font:12p
       <div><label>Music volume</label><input id="musvol" type="range" min="0" max="2" step="0.05" value="1"></div>
       <div><label>Sound FX volume</label><input id="sfxvol" type="range" min="0" max="2" step="0.05" value="1"></div>
     </div>
+    <div class="row" style="margin-top:8px"><label class="mut"><input type="checkbox" id="gpu"> Fast GPU mode (can make noise on some phones)</label></div>
+    <div class="row" style="margin-top:8px"><button class="b s" id="resetEngine">Reset voice engine</button><span class="mut" id="engineInfo"></span></div>
   </div>
 </section>
 
@@ -210,11 +212,12 @@ async function loadMain() {
     progress_callback: p => { if (p.status === 'progress' && p.total) { files[p.file] = [p.loaded, p.total]; let a = 0, b = 0; for (const k in files) { a += files[k][0]; b += files[k][1]; } setProg(a / b * 0.3); setStatus(`Downloading voice engine… ${Math.round(a / b * 100)}%`); } } });
   ready = true; setStatus('Voice engine ready');
 }
+async function restartEngine() { try { if (worker && worker !== 'none') worker.terminate(); } catch {} worker = null; ready = false; mainTTS = null; await ensureReady(); }
 function ensureReady() {
   if (FAKE || ready) return Promise.resolve();
   if (mainTTS === null && worker === 'none') return loadMain();
   try { startWorker(); } catch (e) { worker = 'none'; return loadMain(); }
-  return new Promise((res, rej) => { waiters.ready = d => { setStatus('Voice engine ready (' + d + ')'); res(); }; waiters.readyErr = rej; worker.postMessage({ type: 'load', webgpu: true }); });
+  return new Promise((res, rej) => { waiters.ready = d => { setStatus('Voice engine ready (' + (d === 'webgpu' ? 'GPU' : 'safe CPU') + ')'); res(); }; waiters.readyErr = rej; worker.postMessage({ type: 'load', webgpu: store.get('gpu', false) }); });
 }
 async function ttsRaw(text, voice, speed) {
   if (FAKE) { // test tone "voice"
@@ -236,10 +239,19 @@ const idb = (() => { let dbp = null;
     async set(k, v) { try { const db = await open(); db.transaction('tts', 'readwrite').objectStore('tts').put(v, k); } catch {} },
     async clear() { try { const db = await open(); db.transaction('tts', 'readwrite').objectStore('tts').clear(); } catch {} },
   }; })();
+function looksLikeNoise(a) { // zero-crossing rate + crest: speech ~0.05–0.2 ZCR at 24 kHz, noise ~0.5
+  let z = 0, e = 0; for (let i = 1; i < a.length; i++) { if ((a[i] >= 0) !== (a[i - 1] >= 0)) z++; e += a[i] * a[i]; }
+  const zcr = z / a.length; return zcr > 0.27 || e / a.length < 1e-7;
+}
 async function ttsCached(text, voice, speed, force = false) {
-  const key = `${voice}|${speed}|${text}`;
+  const key = `v2|${store.get('gpu', false) ? 'gpu' : 'cpu'}|${voice}|${speed}|${text}`;
   if (!force && !FAKE) { const c = await idb.get(key); if (c) return c; }
-  const r = await ttsRaw(text, voice, speed); const v = { audio: r.audio, sr: r.sr };
+  let r = await ttsRaw(text, voice, speed);
+  if (!FAKE && looksLikeNoise(r.audio)) {
+    if (store.get('gpu', false)) { store.set('gpu', false); toast('GPU mode made noise on this phone. Switching to safe mode…', 4000); await restartEngine(); r = await ttsRaw(text, voice, speed); }
+    if (looksLikeNoise(r.audio)) throw new Error('The voice engine returned noise. Tap Voices → "Reset voice engine" and try again.');
+  }
+  const v = { audio: r.audio, sr: r.sr };
   if (!FAKE) idb.set(key, v); return v;
 }
 
@@ -775,6 +787,9 @@ $('#dlZip').onclick = zipAll; $('#x4').onclick = zipAll;
 $('#saveProj').onclick = () => download(new Blob([JSON.stringify({ script: $('#src').value, chars: CHARS }, null, 1)], { type: 'application/json' }), baseName() + '_project.json');
 $('#openProj').onchange = async e => { try { const p = JSON.parse(await e.target.files[0].text()); if (p.script != null) $('#src').value = p.script; if (p.chars) { CHARS = p.chars; store.set('chars', CHARS); renderChars(); } store.set('src', $('#src').value); toast('Project opened'); } catch { toast('Not a project file'); } };
 $('#clearCache').onclick = async () => { await idb.clear(); toast('Voice cache cleared'); };
+$('#gpu').checked = store.get('gpu', false);
+$('#gpu').onchange = async () => { store.set('gpu', $('#gpu').checked); await idb.clear(); if (ready) { toast('Restarting voice engine…'); await restartEngine(); toast('Voice engine: ' + ($('#gpu').checked ? 'GPU' : 'safe CPU')); } };
+$('#resetEngine').onclick = async () => { store.set('gpu', false); $('#gpu').checked = false; await idb.clear(); toast('Resetting…'); await restartEngine(); toast('Voice engine reset (safe CPU mode)'); };
 ['duck', 'lufs', 'musvol', 'sfxvol'].forEach(k => { const el = $('#' + k); el.value = store.get('set_' + k, el.value); el.oninput = () => store.set('set_' + k, el.value); });
 $('#src').value = store.get('src', EXAMPLE);
 renderChars(); renderSounds();
