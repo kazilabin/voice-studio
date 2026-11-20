@@ -9,3 +9,4 @@ Script lines: `VOICE | NAME | voice | speed | effect`, `SET | lufs | -14`, `TIME
 Voices: Kokoro-82M (Apache-2.0) via kokoro-js. Test mode without the model: `?fake=1`.
 
 Libraries bundled: JSZip (MIT, LICENSE-jszip.md), lamejs MP3 encoder (LGPL-3.0, LICENSE-lamejs.txt).
+Microsoft voices (Diego and 100+ languages) via edge-tts-universal (AGPL-3.0, LICENSE-edge-tts-universal.txt): work only in the Microsoft Edge browser.

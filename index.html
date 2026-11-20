@@ -84,7 +84,8 @@ details summary{cursor:pointer;font-weight:700}pre{white-space:pre-wrap;font:12p
   <div class="card">
     <div class="mut">Each character keeps the same voice forever. Names must match the script (WHO column).</div>
     <div id="charList" style="margin-top:6px"></div>
-    <div class="row" style="margin-top:10px"><button class="b s" id="addChar">+ Add character</button></div>
+    <div class="row" style="margin-top:10px"><button class="b s" id="addChar">+ Add character</button><button class="b s" id="loadMS">Load all Microsoft voices</button></div>
+    <div class="mut" style="margin-top:8px">Kokoro = English, offline, any browser. Microsoft (Diego, Elsa…) = 100+ languages, needs internet and the <b>Microsoft Edge</b> browser.</div>
   </div>
   <div class="card"><b>Mix settings</b>
     <div class="char" style="border:0">
@@ -159,13 +160,30 @@ function toast(m, ms = 2200) { const t = $('#toast'); t.textContent = m; t.class
 const VOICES = ['am_liam', 'am_michael', 'am_adam', 'am_echo', 'am_eric', 'am_fenrir', 'am_onyx', 'am_puck', 'am_santa',
   'af_heart', 'af_bella', 'af_nicole', 'af_aoede', 'af_kore', 'af_sarah', 'af_nova', 'af_sky', 'af_alloy', 'af_jessica', 'af_river',
   'bm_george', 'bm_fable', 'bm_lewis', 'bm_daniel', 'bf_emma', 'bf_isabella', 'bf_alice', 'bf_lily'];
+const MS = {
+  'Italian': ['it-IT-DiegoNeural', 'it-IT-ElsaNeural', 'it-IT-IsabellaNeural', 'it-IT-GiuseppeMultilingualNeural'],
+  'English (US)': ['en-US-AndrewNeural', 'en-US-AndrewMultilingualNeural', 'en-US-BrianNeural', 'en-US-BrianMultilingualNeural', 'en-US-ChristopherNeural', 'en-US-EricNeural', 'en-US-GuyNeural', 'en-US-RogerNeural', 'en-US-SteffanNeural',
+    'en-US-AriaNeural', 'en-US-AvaNeural', 'en-US-AvaMultilingualNeural', 'en-US-EmmaNeural', 'en-US-EmmaMultilingualNeural', 'en-US-JennyNeural', 'en-US-MichelleNeural', 'en-US-AnaNeural'],
+  'English (UK)': ['en-GB-RyanNeural', 'en-GB-ThomasNeural', 'en-GB-SoniaNeural', 'en-GB-LibbyNeural', 'en-GB-MaisieNeural'],
+  'Bengali': ['bn-BD-PradeepNeural', 'bn-BD-NabanitaNeural', 'bn-IN-BashkarNeural', 'bn-IN-TanishaaNeural'],
+  'Hindi': ['hi-IN-MadhurNeural', 'hi-IN-SwaraNeural'],
+  'Spanish': ['es-ES-AlvaroNeural', 'es-ES-ElviraNeural', 'es-ES-XimenaNeural', 'es-MX-JorgeNeural', 'es-MX-DaliaNeural'],
+  'French': ['fr-FR-HenriNeural', 'fr-FR-RemyMultilingualNeural', 'fr-FR-DeniseNeural', 'fr-FR-EloiseNeural', 'fr-FR-VivienneMultilingualNeural'],
+  'German': ['de-DE-ConradNeural', 'de-DE-KillianNeural', 'de-DE-FlorianMultilingualNeural', 'de-DE-KatjaNeural', 'de-DE-AmalaNeural', 'de-DE-SeraphinaMultilingualNeural'],
+  'Arabic': ['ar-SA-HamedNeural', 'ar-SA-ZariyahNeural', 'ar-EG-ShakirNeural', 'ar-EG-SalmaNeural'],
+};
+try { const extra = store.get('ms_all', null); if (extra) Object.assign(MS, extra); } catch {}
+const MSLIST = () => Object.values(MS).flat();
+const isMS = v => /^[a-z]{2,3}-[A-Z]{2,}-/.test(v || '');
 const DEF_CHARS = [
   { name: 'LABIN', voice: 'am_liam', speed: 0.90, fx: 'close', color: '#e8b85a' },
   { name: 'WOMAN', voice: 'af_heart', speed: 0.92, fx: 'close', color: '#f29a8a' },
   { name: 'OLDMAN', voice: 'bm_george', speed: 0.88, fx: 'close', color: '#8ab4f2' },
   { name: 'NARRATOR', voice: 'bm_fable', speed: 0.92, fx: 'close', color: '#b59af2' },
+  { name: 'DIEGO', voice: 'it-IT-DiegoNeural', speed: 1.05, fx: 'close', color: '#6fd6a8' },
 ];
 let CHARS = store.get('chars', DEF_CHARS);
+if (!CHARS.some(c => c.name === 'DIEGO')) { CHARS.push({ ...DEF_CHARS[4] }); }
 
 // ---------------- the TTS worker ----------------
 const workerSrc = `
@@ -228,7 +246,18 @@ function ensureReady() {
   try { startWorker(); } catch (e) { worker = 'none'; return loadMain(); }
   return new Promise((res, rej) => { waiters.ready = d => { setStatus('Voice engine ready (' + (d === 'webgpu' ? 'GPU' : 'safe CPU') + ')'); res(); }; waiters.readyErr = rej; worker.postMessage({ type: 'load', webgpu: store.get('gpu', false) }); });
 }
+let EdgeMod = null;
+async function msTTS(text, voice, speed) {
+  if (!EdgeMod) EdgeMod = await import('./edge-tts.js');
+  const pct = Math.round((speed - 1) * 100), rate = (pct >= 0 ? '+' : '') + pct + '%';
+  let r;
+  try { r = await Promise.race([new EdgeMod.EdgeTTS(text, voice, { rate }).synthesize(), new Promise((_, rej) => setTimeout(() => rej(new Error('no answer from Microsoft')), 25000))]); }
+  catch (e) { throw new Error(/edg/i.test(navigator.userAgent) ? 'Microsoft voice failed: ' + (e.message || e) + ' (check internet)' : 'Microsoft voices only work in the Microsoft Edge browser. Open this app in Edge (Play Store: Microsoft Edge), or pick a Kokoro voice.'); }
+  const ctx = new OfflineAudioContext(1, 1, SR), b = await ctx.decodeAudioData(await r.audio.arrayBuffer());
+  return { audio: b.getChannelData(0).slice(), sr: b.sampleRate };
+}
 async function ttsRaw(text, voice, speed) {
+  if (isMS(voice) && !FAKE) return msTTS(text, voice, speed);
   if (FAKE) { // test tone "voice"
     const sr = 24000, n = Math.round(sr * Math.max(0.6, text.length * 0.06 / speed)), a = new Float32Array(n);
     for (let i = 0; i < n; i++) { const t = i / sr; a[i] = 0.3 * Math.sin(2 * Math.PI * (140 + 40 * Math.sin(t * 7)) * t) * (0.5 + 0.5 * Math.sin(t * 19)); }
@@ -256,9 +285,9 @@ async function ttsCached(text, voice, speed, force = false) {
   const key = `v2|${store.get('gpu', false) ? 'gpu' : 'cpu'}|${voice}|${speed}|${text}`;
   if (!force && !FAKE) { const c = await idb.get(key); if (c) return c; }
   let r = await ttsRaw(text, voice, speed);
-  if (!FAKE && looksLikeNoise(r.audio)) {
+  if (!FAKE && !isMS(voice) && looksLikeNoise(r.audio)) {
     if (store.get('gpu', false)) { store.set('gpu', false); toast('GPU mode made noise on this phone. Switching to safe mode…', 4000); await restartEngine(); r = await ttsRaw(text, voice, speed); }
-    if (looksLikeNoise(r.audio)) throw new Error('The voice engine returned noise. Tap Voices → "Reset voice engine" and try again.');
+    if (!isMS(voice) && looksLikeNoise(r.audio)) throw new Error('The voice engine returned noise. Tap Voices → "Reset voice engine" and try again.');
   }
   const v = { audio: r.audio, sr: r.sr };
   if (!FAKE) idb.set(key, v); return v;
@@ -406,8 +435,8 @@ function parse(text) {
     const head = p[0].toUpperCase();
     if (head === 'END') { out.push({ type: 'END', t: parseFloat(p[1]) }); return; }
     if (head === 'VOICE') { // VOICE | NAME | kokoro_voice | speed | default_effect | #color
-      const v = (p[2] || '').toLowerCase();
-      if (!VOICES.includes(v)) { errs.push(`Line ${ln + 1}: unknown voice "${p[2]}". Use one from the Voices tab.`); return; }
+      let v = (p[2] || '').trim(); if (!isMS(v)) v = v.toLowerCase();
+      if (!VOICES.includes(v) && !(isMS(v) && /Neural$/.test(v))) { errs.push(`Line ${ln + 1}: unknown voice "${p[2]}". Use one from the Voices tab.`); return; }
       out.push({ type: 'VOICEDEF', name: (p[1] || '').toUpperCase().replace(/\s+/g, ''), voice: v, speed: parseFloat(p[3]) || 1, fx: VFX[(p[4] || '').toLowerCase()] ? p[4].toLowerCase() : 'close', color: /^#[0-9a-f]{6}$/i.test(p[5] || '') ? p[5] : null });
       return; }
     if (head === 'SET') { out.push({ type: 'SET', key: (p[1] || '').toLowerCase(), val: p[2] }); return; }
@@ -455,7 +484,7 @@ async function generate(force = false) {
   STOP = false; $('#gen').disabled = true; $('#stop').disabled = false; setProg(0);
   try {
     setStatus(FAKE ? 'Test mode (no voice model)' : (ready ? 'Making voices…' : 'Loading voice engine…'));
-    await ensureReady();
+    if (voices.some(v => !isMS((charOf(v.who) || {}).voice || 'am_liam'))) await ensureReady();
     // 1. voices
     let k = 0;
     for (const v of voices) {
@@ -709,7 +738,7 @@ function renderChars() {
   CHARS.forEach((c, i) => {
     const d = document.createElement('div'); d.className = 'char';
     d.innerHTML = `<div><label>Name (in script)</label><input data-k="name" value="${c.name}"></div>
-      <div><label>Voice</label><select data-k="voice">${VOICES.map(v => `<option ${v === c.voice ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
+      <div><label>Voice</label><select data-k="voice"><optgroup label="Kokoro (English, works everywhere, offline)">${VOICES.map(v => `<option ${v === c.voice ? 'selected' : ''}>${v}</option>`).join('')}</optgroup>${Object.entries(MS).map(([g, l]) => `<optgroup label="Microsoft · ${g} (Edge browser, online)">${l.map(v => `<option ${v === c.voice ? 'selected' : ''}>${v}</option>`).join('')}</optgroup>`).join('')}${isMS(c.voice) && !MSLIST().includes(c.voice) ? `<option selected>${c.voice}</option>` : ''}</select></div>
       <div><label>Speed: <b>${c.speed.toFixed(2)}</b></label><input data-k="speed" type="range" min="0.6" max="1.3" step="0.01" value="${c.speed}"></div>
       <div><label>Default effect</label><select data-k="fx">${Object.keys(VFX).map(v => `<option ${v === c.fx ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
       <div class="row"><input data-k="color" type="color" value="${c.color || '#e8b85a'}" style="width:44px;padding:2px"><button class="b s" data-a="try">▶ Try voice</button></div>
@@ -717,13 +746,17 @@ function renderChars() {
     d.querySelectorAll('[data-k]').forEach(el => el.oninput = () => { const k = el.dataset.k; c[k] = k === 'speed' ? parseFloat(el.value) : k === 'name' ? el.value.toUpperCase().replace(/\s+/g, '') : el.value;
       if (k === 'speed') el.previousElementSibling.querySelector('b').textContent = c.speed.toFixed(2); store.set('chars', CHARS); });
     d.querySelector('[data-a=try]').onclick = async e => { const b = e.target; b.disabled = true; b.textContent = '…';
-      try { const r = await ttsCached(`Hi, I'm ${c.name.charAt(0) + c.name.slice(1).toLowerCase()}. This is my voice.`, c.voice, c.speed);
+      try { const nm = c.name.charAt(0) + c.name.slice(1).toLowerCase(); const r = await ttsCached(/^it-/.test(c.voice) ? `Ciao, sono ${nm}. Questa è la mia voce.` : `Hi, I'm ${nm}. This is my voice.`, c.voice, c.speed);
         let x = trimSil(await resample(r.audio, r.sr)); playBuf(await applyVfx(compress(x, 0.3, 3), c.fx)); }
       catch (err) { toast('Voice engine: ' + err.message); } b.disabled = false; b.textContent = '▶ Try voice'; };
     d.querySelector('[data-a=del]').onclick = () => { if (CHARS.length > 1) { CHARS.splice(i, 1); store.set('chars', CHARS); renderChars(); } };
     box.appendChild(d);
   });
 }
+$('#loadMS').onclick = async () => { try { if (!EdgeMod) EdgeMod = await import('./edge-tts.js');
+    const list = await EdgeMod.listVoices(); const g = {}; for (const v of list) { const k = 'All · ' + v.Locale; (g[k] = g[k] || []).push(v.ShortName); }
+    Object.assign(MS, g); store.set('ms_all', g); renderChars(); toast(`Loaded ${list.length} Microsoft voices`); }
+  catch (e) { toast('Could not load the list (works in the Edge browser). The main voices are already in the menu.', 4500); } };
 $('#addChar').onclick = () => { CHARS.push({ name: 'NEW' + CHARS.length, voice: 'am_michael', speed: 0.95, fx: 'close', color: '#9ad8f2' }); store.set('chars', CHARS); renderChars(); };
 
 // ---------------- UI: sounds list ----------------
@@ -760,7 +793,7 @@ const AI_PROMPT = () => `You are the sound designer and writer for my animated s
 ${FORMAT()}
 
 RULES
-- English dialogue only. Write numbers as words in dialogue ("eleven forty-eight").
+- Dialogue language must match the voice (Kokoro voices = English only; Italian lines need an it-IT Microsoft voice such as DIEGO). Write numbers as words in dialogue ("eleven forty-eight").
 - Short, natural lines. Max ~20 words per line; split long speeches into several lines.
 - Every visible action that makes a noise gets a SFX line at the right moment.
 - Use music beds to carry tension; leave 1–2 moments of real silence (CUT) before big reveals.

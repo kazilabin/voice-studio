@@ -1,6 +1,6 @@
 // Offline cache for the app shell and its libraries (the voice model is cached by the engine itself)
-const C = 'voice-studio-v4';
-const SHELL = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './jszip.min.js', './lame.min.js'];
+const C = 'voice-studio-v5';
+const SHELL = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './jszip.min.js', './lame.min.js', './edge-tts.js'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(C).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== C).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener('fetch', e => {
