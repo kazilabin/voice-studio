@@ -73,7 +73,7 @@ details summary{cursor:pointer;font-weight:700}pre{white-space:pre-wrap;font:12p
   <div class="card" id="result" style="display:none">
     <canvas id="tl"></canvas>
     <audio id="player" controls></audio>
-    <div class="row" style="margin-top:8px"><button class="b g grow" id="dlMix">⬇ Download mix (WAV)</button><button class="b s" id="dlZip">⬇ All (ZIP)</button></div>
+    <div class="row" style="margin-top:8px"><button class="b g grow" id="dlMix">⬇ Download mix (MP3)</button><button class="b s" id="dlZip">⬇ All (ZIP)</button></div>
     <div class="mut" id="stats" style="margin-top:6px"></div>
   </div>
   <div class="card" id="linesCard" style="display:none"><div class="mut" style="margin-bottom:4px">Voice lines: ▶ play · ↻ remake · 🎤 use your own recording</div><div id="lines"></div></div>
@@ -109,7 +109,7 @@ details summary{cursor:pointer;font-weight:700}pre{white-space:pre-wrap;font:12p
 <section id="export">
   <div class="card">
     <p class="mut">Make audio first on the Script tab. Then:</p>
-    <div class="row"><button class="b g" id="x1">⬇ Full mix (WAV)</button><button class="b" id="x2">⬇ Subtitles (.srt)</button><button class="b" id="x3">⬇ Timings for animation (.json)</button><button class="b" id="x4">⬇ Everything (ZIP)</button></div>
+    <div class="row"><button class="b g" id="x1">⬇ Mix (MP3, small)</button><button class="b" id="x1w">⬇ Mix (WAV, full quality)</button><button class="b" id="x2">⬇ Subtitles (.srt)</button><button class="b" id="x3">⬇ Timings for animation (.json)</button><button class="b" id="x4">⬇ Everything (ZIP, under 10 MB)</button></div>
     <p class="mut">Give the mix + subtitles + timings to ChatGPT and tell it: “Animate to this audio. Lock every shot to timings.json.”</p>
     <div class="row"><button class="b s" id="copyAnim">📋 Copy animation prompt for ChatGPT</button></div>
   </div>
@@ -132,8 +132,17 @@ details summary{cursor:pointer;font-weight:700}pre{white-space:pre-wrap;font:12p
 </section>
 </main>
 <div class="toast" id="toast"></div>
+<div id="sheet" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:20;align-items:flex-end;justify-content:center">
+  <div class="card" style="width:100%;max-width:760px;margin:0;border-radius:18px 18px 0 0;padding:18px">
+    <div style="font-weight:800;margin-bottom:4px" id="shName">file</div><div class="mut" id="shSize" style="margin-bottom:12px"></div>
+    <div class="row"><a class="b g grow" id="shSave" style="text-align:center;text-decoration:none">⬇ Save to phone</a><button class="b grow" id="shShare">↗ Share / send to app</button></div>
+    <div class="mut" style="margin-top:10px">Saved files go to your <b>Downloads</b> folder. Share lets you send it straight to ChatGPT, Drive or WhatsApp.</div>
+    <div class="row" style="margin-top:12px"><button class="b s grow" id="shClose">Close</button></div>
+  </div>
+</div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="jszip.min.js"></script>
+<script src="lame.min.js"></script>
 <script type="module">
 // ======================================================================
 //  Labin Voice Studio — Kokoro TTS + effects + SFX + music + mix, in the browser
@@ -568,22 +577,64 @@ function wav(chs, sr = SR) { const n = chs[0].length, c = chs.length, buf = new 
   v.setUint32(24, sr, true); v.setUint32(28, sr * c * 2, true); v.setUint16(32, c * 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, n * c * 2, true);
   let o = 44; for (let i = 0; i < n; i++) for (let ch = 0; ch < c; ch++) { const s = Math.max(-1, Math.min(1, chs[ch][i])); v.setInt16(o, s * 32767, true); o += 2; }
   return new Blob([buf], { type: 'audio/wav' }); }
+async function mp3(chs, kbps = 192) { // small files for sharing (ChatGPT etc.)
+  if (!window.lamejs) throw new Error('MP3 encoder not loaded');
+  const enc = new lamejs.Mp3Encoder(chs.length, SR, kbps), blk = 1152, n = chs[0].length, parts = [];
+  const i16 = chs.map(c => { const o = new Int16Array(n); for (let i = 0; i < n; i++) { const v = Math.max(-1, Math.min(1, c[i])); o[i] = v < 0 ? v * 32768 : v * 32767; } return o; });
+  for (let i = 0, k = 0; i < n; i += blk, k++) {
+    const d = chs.length === 2 ? enc.encodeBuffer(i16[0].subarray(i, i + blk), i16[1].subarray(i, i + blk)) : enc.encodeBuffer(i16[0].subarray(i, i + blk));
+    if (d.length) parts.push(new Uint8Array(d));
+    if (k % 400 === 399) await new Promise(r => setTimeout(r, 0));
+  }
+  const e = enc.flush(); if (e.length) parts.push(new Uint8Array(e));
+  return new Blob(parts, { type: 'audio/mpeg' });
+}
 const ts = t => { const ms = Math.round(t * 1000), h = Math.floor(ms / 3600000), m = Math.floor(ms / 60000) % 60, s = Math.floor(ms / 1000) % 60; return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(ms % 1000).padStart(3, '0')}`; };
 function srt() { const v = LAST.voices.slice().sort((a, b) => a.t - b.t);
   return v.map((x, i) => { const nxt = v[i + 1] ? v[i + 1].t - 0.05 : LAST.DUR; const t1 = Math.min(nxt, Math.max(x.t + 1.8, x.t + x.dur + 0.6)); return `${i + 1}\n${ts(x.t)} --> ${ts(t1)}\n${x.text}\n`; }).join('\n'); }
-function timings() { return JSON.stringify({ duration: +LAST.DUR.toFixed(2), events: LAST.items.filter(i => i.type !== 'END').map(i => ({
+function timings() { return JSON.stringify({ duration: +LAST.DUR.toFixed(2), events: LAST.items.filter(i => i.type !== 'END' && i.t != null).map(i => ({
   t: +i.t.toFixed(2), end: +(i.t + (i.dur || 0)).toFixed(2), type: i.type.toLowerCase(), who: i.who, fx: i.fx, text: i.text, name: i.name,
   lip_sync: i.type === 'VOICE' ? !['phone', 'radio', 'far', 'dream'].includes(i.fx || (charOf(i.who) || {}).fx) : undefined })) }, null, 1); }
-function download(blob, name) { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000); }
+let sheetURL = null;
+function download(blob, name) { // opens a sheet: the user's own tap on a real link is never blocked
+  if (sheetURL) URL.revokeObjectURL(sheetURL); sheetURL = URL.createObjectURL(blob);
+  const a = $('#shSave'); a.href = sheetURL; a.download = name;
+  $('#shName').textContent = name; $('#shSize').textContent = (blob.size / 1048576).toFixed(1) + ' MB';
+  const file = new File([blob], name, { type: blob.type || 'application/octet-stream' });
+  const canShare = !!(navigator.canShare && navigator.canShare({ files: [file] }));
+  $('#shShare').style.display = canShare ? '' : 'none';
+  $('#shShare').onclick = async () => { try { await navigator.share({ files: [file], title: name }); } catch (e) { if (e && e.name !== 'AbortError') toast('Share not available here, use Save.'); } };
+  $('#sheet').style.display = 'flex';
+}
+const FILES = {}; // prebuilt right after the audio is made, so buttons respond instantly
+const LIMIT = 9.5 * 1048576; // keep the ZIP under 10 MB
+async function prebuild() {
+  const b = baseName();
+  FILES.wav = [wav([LAST.mix.L, LAST.mix.R]), `${b}_mix.wav`];
+  FILES.srt = [new Blob([srt()], { type: 'text/plain' }), `${b}.srt`];
+  FILES.json = [new Blob([timings()], { type: 'application/json' }), `${b}_timings.json`];
+  FILES.mix = null; FILES.zip = null;
+  try { FILES.mix = [await mp3([LAST.mix.L, LAST.mix.R], 192), `${b}_mix.mp3`]; } catch (e) { FILES.mix = FILES.wav; }
+  if (!window.JSZip) return;
+  const base = [[FILES.mix[1], FILES.mix[0]], [FILES.srt[1], FILES.srt[0]], [FILES.json[1], FILES.json[0]], ['script.txt', $('#src').value], ['ANIMATE_ME.txt', animBrief(b)]];
+  const lines = [], stems = [];
+  for (const [i, v] of LAST.voices.entries()) lines.push([`voice_lines/${String(i + 1).padStart(2, '0')}_${v.t.toFixed(2)}s_${v.who}.mp3`, await mp3([v.buf], 96)]);
+  for (const [k, ch] of [['dialogue', LAST.mix.vox], ['music', LAST.mix.mus], ['sfx', LAST.mix.sfx]]) stems.push([`stems/${k}.mp3`, await mp3([ch], 96)]);
+  const size = arr => arr.reduce((s, [, d]) => s + (d.size || d.length || 0), 0);
+  let pack = [...base, ...lines, ...stems], note = '';
+  if (size(pack) > LIMIT) { pack = [...base, ...lines]; note = 'stems left out to stay under 10 MB'; }
+  if (size(pack) > LIMIT) { pack = [...base]; note = 'stems and single voice lines left out to stay under 10 MB'; }
+  const z = new JSZip(); for (const [n, d] of pack) z.file(n, d);
+  FILES.zip = [await z.generateAsync({ type: 'blob', compression: 'DEFLATE' }), `${b}_audio.zip`];
+  FILES.zipNote = note;
+}
+
 const baseName = () => (($('#src').value.match(/^#\s*(.+)$/m) || [, 'episode'])[1]).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'episode';
 const need = () => { if (!LAST) { toast('Make the audio first (Script tab).'); return false; } return true; };
-async function zipAll() { if (!need()) return; if (!window.JSZip) { toast('ZIP library not loaded (offline?). Download files one by one.'); return; }
-  const z = new JSZip(), b = baseName();
-  z.file(`${b}_mix.wav`, wav([LAST.mix.L, LAST.mix.R])); z.file(`${b}.srt`, srt()); z.file(`${b}_timings.json`, timings()); z.file('script.txt', $('#src').value);
-  z.file('ANIMATE_ME.txt', animBrief(b));
-  z.file('stems/dialogue.wav', wav([LAST.mix.vox])); z.file('stems/music.wav', wav([LAST.mix.mus])); z.file('stems/sfx.wav', wav([LAST.mix.sfx]));
-  LAST.voices.forEach((v, i) => z.file(`voice_lines/${String(i + 1).padStart(2, '0')}_${v.t.toFixed(2)}s_${v.who}.wav`, wav([v.buf])));
-  toast('Packing ZIP…'); download(await z.generateAsync({ type: 'blob', compression: 'DEFLATE' }), `${b}_audio.zip`); }
+async function zipAll() { if (!need()) return;
+  if (!window.JSZip) { toast('ZIP needs internet once. Save the files one by one for now.'); return; }
+  if (!FILES.zip) { toast('Packing ZIP…'); await prebuild(); }
+  download(...FILES.zip); if (FILES.zipNote) toast('Note: ' + FILES.zipNote, 4000); }
 
 // ---------------- UI: result, timeline, lines ----------------
 let playerURL = null;
@@ -593,6 +644,7 @@ function showResult() {
   playerURL = URL.createObjectURL(wav([LAST.mix.L, LAST.mix.R])); $('#player').src = playerURL;
   $('#stats').textContent = `${LAST.DUR.toFixed(1)} s · ${LAST.mix.lufs.toFixed(1)} LUFS · ${LAST.items.filter(i => i.type === 'SFX').length} sound effects`;
   drawTL(); renderLines();
+  prebuild().catch(e => console.error(e));
 }
 function drawTL() {
   const c = $('#tl'), dpr = devicePixelRatio || 1, W = c.clientWidth, H = 150; c.width = W * dpr; c.height = H * dpr;
@@ -777,12 +829,15 @@ $('#pasteBtn').onclick = async () => { try { let t = await navigator.clipboard.r
 $('#src').oninput = () => { $('#src').value = $('#src').value.replace(/^```[a-z]*\n?|```\s*$/gm, ''); store.set('src', $('#src').value); };
 $('#gen').onclick = () => generate();
 $('#oneTap').onclick = async () => { try { let t = await navigator.clipboard.readText(); t = t.replace(/^```[a-z]*\n?|```\s*$/gm, '').trim(); if (t.includes('|')) { $('#src').value = t; store.set('src', t); } } catch {}
-  await generate(); if (LAST) await zipAll(); };
+  await generate(); if (LAST) { await prebuild(); zipAll(); } };
 $('#stop').onclick = () => { STOP = true; };
-const dlMix = () => need() && download(wav([LAST.mix.L, LAST.mix.R]), baseName() + '_mix.wav');
+const dlMix = async () => { if (!need()) return; if (!FILES.mix) { toast('Preparing…'); await prebuild(); } download(...FILES.mix); };
+$('#x1w').onclick = () => need() && download(...(FILES.wav || [wav([LAST.mix.L, LAST.mix.R]), baseName() + '_mix.wav']));
 $('#dlMix').onclick = dlMix; $('#x1').onclick = dlMix;
-$('#x2').onclick = () => need() && download(new Blob([srt()], { type: 'text/plain' }), baseName() + '.srt');
-$('#x3').onclick = () => need() && download(new Blob([timings()], { type: 'application/json' }), baseName() + '_timings.json');
+$('#x2').onclick = () => need() && download(...FILES.srt);
+$('#x3').onclick = () => need() && download(...FILES.json);
+$('#shClose').onclick = () => { $('#sheet').style.display = 'none'; };
+$('#sheet').onclick = e => { if (e.target.id === 'sheet') $('#sheet').style.display = 'none'; };
 $('#dlZip').onclick = zipAll; $('#x4').onclick = zipAll;
 $('#saveProj').onclick = () => download(new Blob([JSON.stringify({ script: $('#src').value, chars: CHARS }, null, 1)], { type: 'application/json' }), baseName() + '_project.json');
 $('#openProj').onchange = async e => { try { const p = JSON.parse(await e.target.files[0].text()); if (p.script != null) $('#src').value = p.script; if (p.chars) { CHARS = p.chars; store.set('chars', CHARS); renderChars(); } store.set('src', $('#src').value); toast('Project opened'); } catch { toast('Not a project file'); } };

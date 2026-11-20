@@ -7,3 +7,5 @@ Open: https://kazilabin.github.io/voice-studio/ → Chrome ⋮ → Add to Home s
 Script lines: `VOICE | NAME | voice | speed | effect`, `SET | lufs | -14`, `TIME | WHO | effect | text`, `TIME | SFX | name`, `TIME | MUSIC | bed | seconds`, `TIME | CUT | seconds`, `END | seconds`. TIME can be `+0.4` (after the previous line).
 
 Voices: Kokoro-82M (Apache-2.0) via kokoro-js. Test mode without the model: `?fake=1`.
+
+Libraries bundled: JSZip (MIT, LICENSE-jszip.md), lamejs MP3 encoder (LGPL-3.0, LICENSE-lamejs.txt).
