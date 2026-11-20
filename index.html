@@ -598,7 +598,7 @@ function timings() { return JSON.stringify({ duration: +LAST.DUR.toFixed(2), eve
 let sheetURL = null;
 function download(blob, name) { // opens a sheet: the user's own tap on a real link is never blocked
   if (sheetURL) URL.revokeObjectURL(sheetURL); sheetURL = URL.createObjectURL(blob);
-  const a = $('#shSave'); a.href = sheetURL; a.download = name;
+  const a = $('#shSave'); a.href = sheetURL; a.download = name; a.style.opacity = 1; $('#shSize').className = 'mut';
   $('#shName').textContent = name; $('#shSize').textContent = (blob.size / 1048576).toFixed(1) + ' MB';
   const file = new File([blob], name, { type: blob.type || 'application/octet-stream' });
   const canShare = !!(navigator.canShare && navigator.canShare({ files: [file] }));
@@ -608,33 +608,48 @@ function download(blob, name) { // opens a sheet: the user's own tap on a real l
 }
 const FILES = {}; // prebuilt right after the audio is made, so buttons respond instantly
 const LIMIT = 9.5 * 1048576; // keep the ZIP under 10 MB
-async function prebuild() {
+let PREB = null, PREB_STEP = '';
+function prebuild() { if (!PREB) PREB = prebuildRun().catch(e => { PREB = null; throw e; }); return PREB; }
+async function prebuildRun() {
   const b = baseName();
   FILES.wav = [wav([LAST.mix.L, LAST.mix.R]), `${b}_mix.wav`];
   FILES.srt = [new Blob([srt()], { type: 'text/plain' }), `${b}.srt`];
   FILES.json = [new Blob([timings()], { type: 'application/json' }), `${b}_timings.json`];
-  FILES.mix = null; FILES.zip = null;
+  FILES.mix = null; FILES.zip = null; PREB_STEP = 'Encoding mix MP3';
   try { FILES.mix = [await mp3([LAST.mix.L, LAST.mix.R], 192), `${b}_mix.mp3`]; } catch (e) { FILES.mix = FILES.wav; }
   if (!window.JSZip) return;
   const base = [[FILES.mix[1], FILES.mix[0]], [FILES.srt[1], FILES.srt[0]], [FILES.json[1], FILES.json[0]], ['script.txt', $('#src').value], ['ANIMATE_ME.txt', animBrief(b)]];
   const lines = [], stems = [];
+  PREB_STEP = 'Encoding voice lines';
   for (const [i, v] of LAST.voices.entries()) lines.push([`voice_lines/${String(i + 1).padStart(2, '0')}_${v.t.toFixed(2)}s_${v.who}.mp3`, await mp3([v.buf], 96)]);
+  PREB_STEP = 'Encoding stems';
   for (const [k, ch] of [['dialogue', LAST.mix.vox], ['music', LAST.mix.mus], ['sfx', LAST.mix.sfx]]) stems.push([`stems/${k}.mp3`, await mp3([ch], 96)]);
   const size = arr => arr.reduce((s, [, d]) => s + (d.size || d.length || 0), 0);
   let pack = [...base, ...lines, ...stems], note = '';
   if (size(pack) > LIMIT) { pack = [...base, ...lines]; note = 'stems left out to stay under 10 MB'; }
   if (size(pack) > LIMIT) { pack = [...base]; note = 'stems and single voice lines left out to stay under 10 MB'; }
+  PREB_STEP = 'Packing ZIP';
   const z = new JSZip(); for (const [n, d] of pack) z.file(n, d);
-  FILES.zip = [await z.generateAsync({ type: 'blob', compression: 'DEFLATE' }), `${b}_audio.zip`];
+  FILES.zip = [await z.generateAsync({ type: 'blob', compression: 'STORE', mimeType: 'application/zip' }), `${b}_audio.zip`];
+  PREB_STEP = 'ready';
   FILES.zipNote = note;
 }
 
 const baseName = () => (($('#src').value.match(/^#\s*(.+)$/m) || [, 'episode'])[1]).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'episode';
 const need = () => { if (!LAST) { toast('Make the audio first (Script tab).'); return false; } return true; };
 async function zipAll() { if (!need()) return;
-  if (!window.JSZip) { toast('ZIP needs internet once. Save the files one by one for now.'); return; }
-  if (!FILES.zip) { toast('Packing ZIP…'); await prebuild(); }
+  if (!window.JSZip) { toast('ZIP tool did not load. Close and reopen the app, then try again.', 4000); return; }
+  if (!FILES.zip) {
+    openSheetWaiting('Preparing ZIP…');
+    const iv = setInterval(() => { $('#shSize').textContent = (PREB_STEP || 'Working') + '…'; }, 300);
+    try { await prebuild(); } catch (e) { clearInterval(iv); $('#shSize').textContent = 'Problem: ' + (e && e.message || e); $('#shSize').className = 'err'; return; }
+    clearInterval(iv);
+  }
   download(...FILES.zip); if (FILES.zipNote) toast('Note: ' + FILES.zipNote, 4000); }
+function openSheetWaiting(title) {
+  $('#shName').textContent = title; $('#shSize').textContent = 'Working…'; $('#shSize').className = 'mut';
+  const a = $('#shSave'); a.removeAttribute('href'); a.style.opacity = .4; $('#shShare').style.display = 'none'; $('#sheet').style.display = 'flex';
+}
 
 // ---------------- UI: result, timeline, lines ----------------
 let playerURL = null;
@@ -644,7 +659,7 @@ function showResult() {
   playerURL = URL.createObjectURL(wav([LAST.mix.L, LAST.mix.R])); $('#player').src = playerURL;
   $('#stats').textContent = `${LAST.DUR.toFixed(1)} s · ${LAST.mix.lufs.toFixed(1)} LUFS · ${LAST.items.filter(i => i.type === 'SFX').length} sound effects`;
   drawTL(); renderLines();
-  prebuild().catch(e => console.error(e));
+  PREB = null; prebuild().catch(e => console.error(e));
 }
 function drawTL() {
   const c = $('#tl'), dpr = devicePixelRatio || 1, W = c.clientWidth, H = 150; c.width = W * dpr; c.height = H * dpr;
